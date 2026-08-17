@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: groundtruth-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: GEMINI_MODEL_FALLBACK
+        value: gemini-flash-lite-latest
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: nvidia/nemotron-nano-12b-v2-vl:free
+      - key: OPENROUTER_MODEL_FALLBACK
+        value: google/gemma-4-31b-it:free
+      - key: CORS_ORIGINS
+        value: https://YOUR-FRONTEND-DOMAIN.pages.dev
+      - key: CONFIDENCE_REVIEW_THRESHOLD
+        value: "0.75"
+    # Render's free tier has no persistent disk, so intake_agent.db resets on
+    # every redeploy/restart there. See README "Persistence" section.
