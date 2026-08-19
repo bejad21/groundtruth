@@ -85,4 +85,4 @@ Full detail, including the honest gaps, is in [SECURITY.md](./SECURITY.md). Summ
 
 ## Deployment
 
-`deploy/render.yaml` deploys the backend to Render's free tier; `frontend/vercel.json` is set up for Vercel. Set the API keys as secret environment variables on whichever host you use, and point `VITE_API_BASE` at the deployed backend URL.
+Not currently hosted anywhere, but ready to deploy: `deploy/render.yaml` is a Render blueprint for the backend, and `frontend/vercel.json` is a matching config for the frontend on Vercel. Set the API keys as secret environment variables on whichever host you use, and point `VITE_API_BASE` at the deployed backend URL.
