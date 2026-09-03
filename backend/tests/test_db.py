@@ -115,3 +115,102 @@ def test_confirm_endpoint_returns_a_clean_error_when_encryption_is_not_configure
             "SELECT id FROM records WHERE source_name = ?", ("HTTP Test Farm",)
         ).fetchone()
     assert row is None
+
+
+# ---------------------------------------------------------------------------
+# Foreign key enforcement: records.run_id declares
+# `FOREIGN KEY (run_id) REFERENCES runs (id)` in the schema, but SQLite never
+# actually enforces foreign keys unless `PRAGMA foreign_keys = ON` is set on
+# the connection. Previously it wasn't, so the constraint was purely
+# decorative — a record could reference a run_id that never existed.
+# ---------------------------------------------------------------------------
+
+
+def test_save_record_rejects_a_run_id_that_does_not_exist():
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "FK Test Farm",
+        "truck_or_driver_id": "TRK-FK-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    with pytest.raises(sqlite3.IntegrityError):
+        db.save_record("test-client", 999999, record)
+
+    # And, just as important, nothing was actually written.
+    with sqlite3.connect(db.config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM records WHERE source_name = ?", ("FK Test Farm",)
+        ).fetchone()
+    assert row is None
+
+
+def test_save_record_accepts_a_run_id_that_really_exists():
+    """Regression guard: enforcing the constraint must not break the normal,
+    legitimate case of confirming a record against a real prior run."""
+    run_id = db.log_run(
+        "test-client", provider="gemini", model="gemini-flash-latest",
+        latency_ms=1200, needs_review=False, status="ok",
+    )
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "Real Run Farm",
+        "truck_or_driver_id": "TRK-REAL-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    record_id = db.save_record("test-client", run_id, record)
+    assert record_id is not None
+
+    saved = next(r for r in db.list_records("test-client") if r["id"] == record_id)
+    assert saved["run_id"] == run_id
+
+
+def test_save_record_with_no_run_id_still_works():
+    """A confirm with no prior extraction run (run_id=None) is a legitimate,
+    already-tested case — NULL foreign key values are never checked, by the
+    SQL standard and by SQLite, so enforcing the constraint must not touch it."""
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "No Run Farm",
+        "truck_or_driver_id": "TRK-NORUN-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    record_id = db.save_record("test-client", None, record)
+    assert record_id is not None
+
+
+def test_confirm_endpoint_returns_a_clean_error_for_a_nonexistent_run_id():
+    """Same fix, exercised through the real HTTP endpoint: a bogus run_id must
+    come back as a clean 4xx, not an unhandled 500."""
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "HTTP FK Test Farm",
+        "truck_or_driver_id": "TRK-HTTP-FK-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/confirm",
+            headers={"Authorization": f"Bearer {VALID_KEY}"},
+            json={"record": record, "run_id": 999999},
+        )
+
+    assert res.status_code == 422
+    assert "run_id" in res.json()["detail"]
+
+    with sqlite3.connect(db.config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM records WHERE source_name = ?", ("HTTP FK Test Farm",)
+        ).fetchone()
+    assert row is None
+
+
+def test_confirm_endpoint_still_accepts_a_real_run_id():
+    run_id = db.log_run(
+        "demo-client", provider="gemini", model="gemini-flash-latest",
+        latency_ms=900, needs_review=False, status="ok",
+    )
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "HTTP Real Run Farm",
+        "truck_or_driver_id": "TRK-HTTP-REAL-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/confirm",
+            headers={"Authorization": f"Bearer {VALID_KEY}"},
+            json={"record": record, "run_id": run_id},
+        )
+
+    assert res.status_code == 200
+    assert res.json()["record_id"] is not None

@@ -39,6 +39,7 @@ export interface ExtractResponse {
   trace: ToolTraceStep[];
   model: string;
   run_id: number | null;
+  confidence_threshold: number;
 }
 
 export const RECORD_FIELDS = [

@@ -72,14 +72,14 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-66 tests covering the validation rules, the encryption round-trip (checked by reading the raw `.db` file directly, not just trusting the API), the upload and rate-limit checks, provider failover (including a provider returning a malformed response instead of a clean error), the deploy config, and a set of access-control regression tests written directly against a real vulnerability described in [SECURITY.md](./SECURITY.md).
+75 tests covering the validation rules, the encryption round-trip (checked by reading the raw `.db` file directly, not just trusting the API), the upload and rate-limit checks, provider failover (including a provider returning a malformed response instead of a clean error), the deploy config, and a set of access-control regression tests written directly against a real vulnerability described in [SECURITY.md](./SECURITY.md).
 
 ```bash
 cd frontend
 npm test
 ```
 
-16 tests on the frontend: a bug where an extracted field stayed in English after switching the whole UI to Arabic, the weight field rejecting non-numeric input instead of silently sending it to the backend, and the review screen's pass count matching what the backend actually flagged.
+18 tests on the frontend: a bug where an extracted field stayed in English after switching the whole UI to Arabic, the weight field rejecting non-numeric input instead of silently sending it to the backend, and the review screen's pass count matching what the backend actually flagged (using the confidence threshold the backend actually used for that run, not a guessed constant).
 
 ## Security
 

@@ -260,7 +260,7 @@ export default function App() {
   const flaggedCount = useMemo(() => {
     if (!result) return 0;
     const fields = new Set<string>();
-    result.field_confidences.filter((f) => f.confidence < 0.75).forEach((f) => fields.add(f.field));
+    result.field_confidences.filter((f) => f.confidence < result.confidence_threshold).forEach((f) => fields.add(f.field));
     result.validation_flags.forEach((f) => fields.add(f.field));
     return fields.size;
   }, [result]);
@@ -268,11 +268,13 @@ export default function App() {
   // Counts distinct failed rule *categories*, not raw flag count — two flags
   // in the same category (e.g. two weight complaints) is one failed rule, not
   // two — and folds in the confidence-gate result, which the old formula
-  // (RULE_KEYS.length - validation_flags.length) ignored entirely.
+  // (RULE_KEYS.length - validation_flags.length) ignored entirely. Reads the
+  // threshold from the response instead of a hardcoded guess, so it stays
+  // correct if CONFIDENCE_REVIEW_THRESHOLD is ever changed on the backend.
   const rulesPassed = useMemo(() => {
     if (!result) return 0;
     const failedRules = new Set<string>(result.validation_flags.map((f) => f.rule));
-    if (result.field_confidences.some((f) => f.confidence < 0.75)) failedRules.add('confidence');
+    if (result.field_confidences.some((f) => f.confidence < result.confidence_threshold)) failedRules.add('confidence');
     return RULE_CATEGORIES.length - failedRules.size;
   }, [result]);
 
@@ -454,7 +456,8 @@ export default function App() {
                       <div className="fields-grid">
                         {FIELD_KEYS.map((key) => {
                           const conf = confidenceByField[key];
-                          const low = conf !== undefined && conf < 75;
+                          const thresholdPct = Math.round(result.confidence_threshold * 100);
+                          const low = conf !== undefined && conf < thresholdPct;
                           const messages = flagsByField[key];
                           const weightBad = key === 'weight_kg' && weightInvalid;
                           const hint = weightBad ? t.weightInvalid : (messages?.[0] ?? t.editHint);

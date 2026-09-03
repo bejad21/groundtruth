@@ -43,6 +43,19 @@ def _all_providers_configured(monkeypatch):
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "test-openrouter-key")
 
 
+def test_response_includes_the_configured_confidence_threshold(monkeypatch):
+    """The frontend used to hardcode 0.75 in three places instead of reading
+    the backend's actual, configurable CONFIDENCE_REVIEW_THRESHOLD. Using a
+    value other than the default (0.75) here proves the response reflects
+    whatever's actually configured, not a value baked in somewhere."""
+    monkeypatch.setattr(config, "CONFIDENCE_REVIEW_THRESHOLD", 0.42)
+    monkeypatch.setattr(gemini_provider, "extract", lambda *a, **k: _args())
+
+    result = run_intake_agent(b"fake-bytes", "image/png")
+
+    assert result.response.confidence_threshold == 0.42
+
+
 def test_successful_extraction_returns_a_populated_record(monkeypatch):
     monkeypatch.setattr(gemini_provider, "extract", lambda *a, **k: _args())
 

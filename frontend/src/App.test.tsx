@@ -36,6 +36,7 @@ const FAKE_RESPONSE: ExtractResponse = {
   trace: [{ step: 'result', detail: 'Record accepted automatically.', status: 'ok' }],
   model: 'gemini-lite:gemini-flash-lite-latest',
   run_id: 1,
+  confidence_threshold: 0.75,
 };
 
 async function runToReviewScreen(user: ReturnType<typeof userEvent.setup>) {

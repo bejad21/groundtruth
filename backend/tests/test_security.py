@@ -71,3 +71,53 @@ def test_count_is_scoped_by_key():
     limiter.allow("client-b")
     assert limiter.count("client-a") == 2
     assert limiter.count("client-b") == 1
+
+
+# ---------------------------------------------------------------------------
+# Memory: RateLimiter used to keep a dict entry forever for every distinct key
+# it had ever seen, even once that key's hits had all expired out of the
+# window — a key queried exactly once (a one-off visitor's IP) left a
+# permanent, never-cleaned-up entry. Over a long-running process hit by many
+# distinct IPs, that's unbounded growth. A `clock` callable is injectable so
+# these tests can fast-forward time deterministically instead of sleeping.
+# ---------------------------------------------------------------------------
+
+
+def test_tracked_key_count_does_not_grow_without_bound_as_keys_expire():
+    fake_now = [0.0]
+    limiter = RateLimiter(max_requests=5, window_seconds=10, sweep_interval=20, clock=lambda: fake_now[0])
+
+    for i in range(200):
+        fake_now[0] += 1  # each key's single hit is 200s apart in the end, far outside the 10s window
+        limiter.allow(f"one-off-visitor-{i}")
+
+    # However this is implemented internally, memory must not scale with the
+    # 200 distinct one-off keys that have all long since expired.
+    assert limiter.tracked_key_count() < 25
+
+
+def test_sweep_does_not_evict_a_key_still_inside_its_window():
+    """Regression guard: sweeping must never discard an active client's
+    budget early — that would let them burst past their real limit."""
+    fake_now = [0.0]
+    limiter = RateLimiter(max_requests=3, window_seconds=100, sweep_interval=5, clock=lambda: fake_now[0])
+
+    limiter.allow("active-client")
+    limiter.allow("active-client")
+    # Enough other traffic to trigger several sweeps while "active-client" is
+    # still well inside its 100s window.
+    for i in range(20):
+        fake_now[0] += 1
+        limiter.allow(f"other-{i}")
+
+    assert limiter.count("active-client") == 2
+    assert limiter.allow("active-client") is True  # 3rd request still allowed
+    assert limiter.allow("active-client") is False  # budget (3) is genuinely exhausted, not silently reset
+
+
+def test_default_sweep_interval_does_not_change_default_behavior():
+    """Regression guard: the existing constructor signature (positional
+    max_requests, window_seconds) must keep working unchanged."""
+    limiter = RateLimiter(5, 60)
+    assert limiter.allow("k") is True
+    assert limiter.count("k") == 1

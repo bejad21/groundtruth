@@ -91,6 +91,11 @@ CREATE INDEX IF NOT EXISTS idx_records_client ON records (client_id);
 def _connect():
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
+    # SQLite ignores declared FOREIGN KEY constraints unless this is set on
+    # every connection — it was never set, so records.run_id's reference to
+    # runs(id) was purely decorative: a record could point at a run_id that
+    # never existed. Enabling it makes the schema mean what it says.
+    conn.execute("PRAGMA foreign_keys = ON;")
     try:
         yield conn
         conn.commit()

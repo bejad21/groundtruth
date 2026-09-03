@@ -51,6 +51,11 @@ class ExtractResponse(BaseModel):
     trace: list[ToolTraceStep]
     model: str
     run_id: int | None = None
+    # The threshold the backend actually gated needs_review on for this run
+    # (config.CONFIDENCE_REVIEW_THRESHOLD). Sent so the frontend can flag
+    # low-confidence fields and count passed rules against the real,
+    # currently-configured value instead of a hardcoded guess of its own.
+    confidence_threshold: float
 
 
 class ConfirmRequest(BaseModel):

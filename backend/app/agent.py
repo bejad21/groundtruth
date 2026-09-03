@@ -138,5 +138,6 @@ def run_intake_agent(image_bytes: bytes, mime_type: str, lang: str = "en") -> Ag
         needs_review=needs_review,
         trace=trace,
         model=f"{used_provider}:{used_model}",
+        confidence_threshold=config.CONFIDENCE_REVIEW_THRESHOLD,
     )
     return AgentResult(response, used_provider, used_model, total_latency_ms)

@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -122,6 +123,9 @@ async def confirm_record(request: Request, payload: ConfirmRequest, lang: str = 
     except db.EncryptionNotConfiguredError as exc:
         logger.error("Confirm rejected: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        logger.warning("Confirm rejected: invalid run_id=%s (%s)", payload.run_id, exc)
+        raise HTTPException(status_code=422, detail=f"run_id {payload.run_id} does not refer to a real run.") from exc
     logger.info("Record confirmed: id=%s client=%s", record_id, client_id)
     return {"status": "confirmed", "record": payload.record.model_dump(), "record_id": record_id}
 
