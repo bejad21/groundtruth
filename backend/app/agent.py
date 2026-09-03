@@ -47,10 +47,12 @@ def run_intake_agent(image_bytes: bytes, mime_type: str, lang: str = "en") -> Ag
         ToolTraceStep(step="document_received", detail=f"Received {len(image_bytes) / 1024:.1f} KB document ({mime_type})."),
     ]
 
-    args: dict | None = None
     used_provider = ""
     used_model = ""
     errors: list[str] = []
+
+    record: IntakeRecord | None = None
+    field_confidences: list[FieldConfidence] = []
 
     for name, provider, get_key, get_model in PROVIDER_CHAIN:
         key = get_key()
@@ -63,6 +65,12 @@ def run_intake_agent(image_bytes: bytes, mime_type: str, lang: str = "en") -> Ag
         call_started = time.monotonic()
         try:
             args = provider.extract(image_bytes, mime_type, model, key)
+            confidences_raw = args.pop("field_confidences", {})
+            record = IntakeRecord(**{k: args.get(k, "") for k in IntakeRecord.model_fields})
+            field_confidences = [
+                FieldConfidence(field=field, confidence=float(confidences_raw.get(field, 0.5)))
+                for field in CONFIDENCE_FIELDS
+            ]
             used_provider, used_model = name, model
             elapsed_ms = int((time.monotonic() - call_started) * 1000)
             trace.append(ToolTraceStep(step="provider_call", detail=f"{name} returned a structured JSON payload ({elapsed_ms}ms)."))
@@ -76,19 +84,25 @@ def run_intake_agent(image_bytes: bytes, mime_type: str, lang: str = "en") -> Ag
                 status="flagged",
             ))
             continue
+        except (ValueError, TypeError) as exc:
+            # A provider that returns HTTP 200 with a malformed payload (a
+            # non-numeric confidence score, a weight that isn't a number) is
+            # just as unusable as one that raised ProviderError outright —
+            # treat it the same way: log it, fail over, don't crash the request.
+            summary = _summarize_error(exc)
+            errors.append(f"{name}: malformed response ({summary})")
+            trace.append(ToolTraceStep(
+                step="provider_failover",
+                detail=f"{name} returned an unusable response ({summary}). Falling back to the next provider.",
+                status="flagged",
+            ))
+            args = None
+            continue
 
-    if args is None:
+    if record is None:
         detail = "; ".join(errors) if errors else "No AI provider is configured (missing API keys)."
         trace.append(ToolTraceStep(step="provider_call", detail=detail, status="error"))
         raise AgentError(detail)
-
-    confidences_raw = args.pop("field_confidences", {})
-    record = IntakeRecord(**{k: args.get(k, "") for k in IntakeRecord.model_fields})
-
-    field_confidences = [
-        FieldConfidence(field=field, confidence=float(confidences_raw.get(field, 0.5)))
-        for field in CONFIDENCE_FIELDS
-    ]
 
     low_confidence_fields = [fc.field for fc in field_confidences if fc.confidence < config.CONFIDENCE_REVIEW_THRESHOLD]
     if low_confidence_fields:

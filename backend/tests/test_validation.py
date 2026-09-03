@@ -24,16 +24,25 @@ def test_missing_required_field_is_blocking():
     assert len(flags) == 1
     assert flags[0].field == "source_name"
     assert flags[0].severity == "blocking"
+    assert flags[0].rule == "required"
 
 
 def test_material_not_on_allow_list_is_blocking():
     flags = validate_record(_record(material_type="plutonium"))
-    assert any(f.field == "material_type" and f.severity == "blocking" for f in flags)
+    assert any(f.field == "material_type" and f.severity == "blocking" and f.rule == "required" for f in flags)
 
 
 def test_zero_or_negative_weight_is_blocking():
     flags = validate_record(_record(weight_kg=0))
-    assert any(f.field == "weight_kg" and f.severity == "blocking" for f in flags)
+    assert any(f.field == "weight_kg" and f.severity == "blocking" and f.rule == "weight" for f in flags)
+
+
+def test_zero_weight_produces_exactly_one_flag_not_a_double_report():
+    """Pins the exact edge case the old required-field check's tangled boolean logic
+    existed to handle: weight_kg=0 must be flagged once (by the nonpositive-weight
+    check), not also separately reported as a missing required field."""
+    flags = validate_record(_record(weight_kg=0))
+    assert len(flags) == 1
 
 
 def test_weight_over_ceiling_is_a_warning_not_blocking():
@@ -41,16 +50,17 @@ def test_weight_over_ceiling_is_a_warning_not_blocking():
     assert len(flags) == 1
     assert flags[0].field == "weight_kg"
     assert flags[0].severity == "warning"
+    assert flags[0].rule == "weight"
 
 
 def test_unparseable_date_is_blocking():
     flags = validate_record(_record(delivery_date="not-a-date"))
-    assert any(f.field == "delivery_date" and f.severity == "blocking" for f in flags)
+    assert any(f.field == "delivery_date" and f.severity == "blocking" and f.rule == "date" for f in flags)
 
 
 def test_future_date_is_a_warning():
     flags = validate_record(_record(delivery_date="2099-01-01"))
-    assert any(f.field == "delivery_date" and f.severity == "warning" for f in flags)
+    assert any(f.field == "delivery_date" and f.severity == "warning" and f.rule == "date" for f in flags)
 
 
 def test_messages_localize_to_arabic():

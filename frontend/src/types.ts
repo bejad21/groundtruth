@@ -16,10 +16,13 @@ export interface FieldConfidence {
   reason: string;
 }
 
+export type RuleCategory = 'required' | 'weight' | 'date';
+
 export interface ValidationFlag {
   field: string;
   severity: Severity;
   message: string;
+  rule: RuleCategory;
 }
 
 export interface ToolTraceStep {

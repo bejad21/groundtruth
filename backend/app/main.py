@@ -16,6 +16,8 @@ logger = logging.getLogger("intake_agent")
 
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 extract_limiter = RateLimiter(max_requests=10, window_seconds=60)
+AUTH_FAILURE_LIMIT = 20
+auth_failure_limiter = RateLimiter(max_requests=AUTH_FAILURE_LIMIT, window_seconds=60)
 
 
 @asynccontextmanager
@@ -41,15 +43,24 @@ def _authenticated_client_id(request: Request) -> str:
     header. Previously this trusted an `X-Client-Id` header the caller could set to
     any value, which made the per-client isolation in db.py decorative: anyone could
     read or write another client's records just by naming a different ID. Now the
-    header is gone entirely; the ID is looked up server-side from the API key."""
+    header is gone entirely; the ID is looked up server-side from the API key.
+
+    A valid key always succeeds here, regardless of how many prior failures came
+    from the same IP — only *failed* attempts are throttled below, so this can't
+    be used to lock a legitimate caller out of their own key."""
     auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        client_id = config.CLIENT_API_KEYS.get(auth.removeprefix("Bearer ").strip())
+        if client_id is not None:
+            return client_id
+
+    client_key = request.client.host if request.client else "unknown"
+    if auth_failure_limiter.count(client_key) >= AUTH_FAILURE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many failed authentication attempts. Try again in a minute.")
+    auth_failure_limiter.allow(client_key)
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token.")
-    key = auth.removeprefix("Bearer ").strip()
-    client_id = config.CLIENT_API_KEYS.get(key)
-    if client_id is None:
-        raise HTTPException(status_code=401, detail="Invalid API key.")
-    return client_id
+    raise HTTPException(status_code=401, detail="Invalid API key.")
 
 
 @app.get("/api/health")
@@ -106,16 +117,28 @@ async def confirm_record(request: Request, payload: ConfirmRequest, lang: str = 
     if blocking:
         raise HTTPException(status_code=422, detail=[f.model_dump() for f in blocking])
 
-    record_id = db.save_record(client_id, payload.run_id, payload.record.model_dump())
+    try:
+        record_id = db.save_record(client_id, payload.run_id, payload.record.model_dump())
+    except db.EncryptionNotConfiguredError as exc:
+        logger.error("Confirm rejected: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.info("Record confirmed: id=%s client=%s", record_id, client_id)
     return {"status": "confirmed", "record": payload.record.model_dump(), "record_id": record_id}
 
 
+def _clamp_limit(limit: int, maximum: int = 100) -> int:
+    """Clamp to [1, maximum]. SQLite treats a negative LIMIT as "no limit at
+    all", so a bare `min(limit, maximum)` doesn't actually cap a negative
+    value — `?limit=-1` returned every row in the table instead of the
+    intended cap (confirmed live before this fix)."""
+    return max(1, min(limit, maximum))
+
+
 @app.get("/api/runs")
 async def get_runs(request: Request, limit: int = 20) -> list[dict]:
-    return db.list_runs(_authenticated_client_id(request), limit=min(limit, 100))
+    return db.list_runs(_authenticated_client_id(request), limit=_clamp_limit(limit))
 
 
 @app.get("/api/records")
 async def get_records(request: Request, limit: int = 50) -> list[dict]:
-    return db.list_records(_authenticated_client_id(request), limit=min(limit, 100))
+    return db.list_records(_authenticated_client_id(request), limit=_clamp_limit(limit))

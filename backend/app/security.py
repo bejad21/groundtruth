@@ -45,3 +45,13 @@ class RateLimiter:
             return False
         hits.append(now)
         return True
+
+    def count(self, key: str) -> int:
+        """Current hit count within the window, without recording a new hit.
+        Used to peek ("has this key already used up its budget?") before
+        deciding whether an attempt should count against it at all."""
+        now = time.monotonic()
+        hits = self._hits[key]
+        while hits and now - hits[0] > self.window_seconds:
+            hits.popleft()
+        return len(hits)

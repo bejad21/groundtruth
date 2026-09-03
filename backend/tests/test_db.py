@@ -3,7 +3,13 @@ ciphertext in the database file, not just decrypted correctly through the app la
 (which would pass even if encryption silently no-op'd)."""
 import sqlite3
 
+import pytest
+from fastapi.testclient import TestClient
+
 from app import db
+from app.main import app
+
+VALID_KEY = "test-key-for-pytest-only"  # set in conftest.py's DEMO_API_KEY
 
 
 def test_confirmed_record_round_trips_through_encryption():
@@ -34,3 +40,78 @@ def test_confirmed_record_round_trips_through_encryption():
     assert match["notes"] == "sensitive note"
     # Fields not in ENCRYPTED_FIELDS stay in plaintext, unaffected either way.
     assert match["material_type"] == "date_palm_fronds"
+
+
+def test_save_record_refuses_to_write_when_encryption_is_not_configured(monkeypatch):
+    """Fail-open regression test: previously, if ENCRYPTION_KEY wasn't set, the app
+    silently stored source_name/truck_or_driver_id/notes in plaintext with only a
+    warning log line — the kind of gap that's invisible until someone reads the raw
+    .db file. It must now refuse the write outright instead."""
+    monkeypatch.setattr(db, "_fernet", None)
+
+    record = {
+        "material_type": "date_palm_fronds",
+        "weight_kg": 500,
+        "source_name": "Should Not Be Stored",
+        "truck_or_driver_id": "TRK-NOENC-1",
+        "delivery_date": "2026-01-01",
+        "notes": "must not persist",
+    }
+
+    with pytest.raises(db.EncryptionNotConfiguredError):
+        db.save_record("test-client", None, record)
+
+    # No partial/plaintext row must have been written.
+    with sqlite3.connect(db.config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM records WHERE source_name = ?", ("Should Not Be Stored",)
+        ).fetchone()
+    assert row is None
+
+
+def test_save_record_still_works_normally_once_encryption_is_configured(monkeypatch):
+    """Regression guard: the refusal above must be specific to the unconfigured
+    case, not a general break in save_record."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setattr(db, "_fernet", Fernet(Fernet.generate_key()))
+
+    record = {
+        "material_type": "date_palm_fronds",
+        "weight_kg": 500,
+        "source_name": "Configured Again",
+        "truck_or_driver_id": "TRK-OK-1",
+        "delivery_date": "2026-01-01",
+        "notes": "fine",
+    }
+    record_id = db.save_record("test-client", None, record)
+    assert record_id is not None
+
+
+def test_confirm_endpoint_returns_a_clean_error_when_encryption_is_not_configured(monkeypatch):
+    """Same fix, exercised through the real HTTP endpoint: /api/confirm must not
+    500 (or, worse, silently succeed with plaintext) when ENCRYPTION_KEY is unset."""
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module.db, "_fernet", None)
+
+    record = {
+        "material_type": "date_palm_fronds", "weight_kg": 100, "source_name": "HTTP Test Farm",
+        "truck_or_driver_id": "TRK-HTTP-1", "delivery_date": "2026-01-01", "notes": "",
+    }
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/confirm",
+            headers={"Authorization": f"Bearer {VALID_KEY}"},
+            json={"record": record, "run_id": None},
+        )
+
+    assert res.status_code == 503
+    assert "ncryption" in res.json()["detail"]  # a real explanation, not a stack trace
+
+    # And nothing was persisted.
+    with sqlite3.connect(db.config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM records WHERE source_name = ?", ("HTTP Test Farm",)
+        ).fetchone()
+    assert row is None

@@ -22,7 +22,7 @@ Every document uploaded is sent to one of these, in order, until one succeeds:
 | Provider | What it receives | Where |
 |---|---|---|
 | Google Gemini API | Full document image/PDF + extraction prompt | Google infrastructure, region not pinned by this app |
-| OpenRouter (Nemotron VL, Gemma) | Full document image/PDF + extraction prompt | Routed to whichever backend OpenRouter selects; not disclosed per-request by OpenRouter |
+| OpenRouter (Nemotron 3 Nano Omni, Gemma) | Full document image/PDF + extraction prompt | Routed to whichever backend OpenRouter selects; not disclosed per-request by OpenRouter |
 
 **This is the honest gap a security review would flag first.** Neither provider's
 processing region is contractually pinned or verifiable from this codebase, and
@@ -67,6 +67,13 @@ authenticated API returns the correct plaintext. `material_type`, `weight_kg`, a
 `delivery_date` are stored in plaintext — they're operational data, not personally
 identifying on their own, and keeping them queryable matters more than encrypting
 them.
+
+**What changed:** confirming a record with `ENCRYPTION_KEY` unset used to log one
+warning line and write the sensitive fields in plaintext anyway, a fail-open default
+for data this document claims is encrypted. `app/db.py: save_record` now raises
+`EncryptionNotConfiguredError` instead, and `/api/confirm` turns that into a `503`
+with no row written. Verified live: unset the key against a running server,
+confirmed the `503`, and confirmed the record never reached the database.
 
 **In transit:** whatever TLS the hosting provider terminates (Render/Vercel/
 Cloudflare all do this by default on their free tiers). Not configured or verified

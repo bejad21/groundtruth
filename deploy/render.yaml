@@ -16,12 +16,22 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: nvidia/nemotron-nano-12b-v2-vl:free
+        value: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
       - key: OPENROUTER_MODEL_FALLBACK
         value: google/gemma-4-31b-it:free
       - key: CORS_ORIGINS
         value: https://YOUR-FRONTEND-DOMAIN.pages.dev
       - key: CONFIDENCE_REVIEW_THRESHOLD
         value: "0.75"
+      # Both of these were missing from this file entirely until an audit caught it —
+      # Render's Blueprint UI only prompts for envVars actually listed here, so a
+      # deploy following this exact file would never have been asked for either one.
+      # DEMO_API_KEY unset -> config.CLIENT_API_KEYS is empty -> every request 401s.
+      # ENCRYPTION_KEY unset -> app/db.py now refuses to write records at all (see
+      # EncryptionNotConfiguredError) rather than silently storing them in plaintext.
+      - key: DEMO_API_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
     # Render's free tier has no persistent disk, so intake_agent.db resets on
     # every redeploy/restart there. See README "Persistence" section.

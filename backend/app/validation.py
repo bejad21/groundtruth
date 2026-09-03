@@ -66,19 +66,22 @@ def validate_record(record: IntakeRecord, lang: str = "en") -> list[ValidationFl
 
     for field_name in REQUIRED_FIELDS:
         value = getattr(record, field_name)
-        if value in (None, "", 0) and not (field_name == "weight_kg" and value == 0):
-            if value is None or value == "":
-                flags.append(ValidationFlag(
-                    field=field_name,
-                    severity="blocking",
-                    message=_msg(lang, "required_missing", _field_label(lang, field_name)),
-                ))
+        # Note: 0 is a legitimate, non-missing value for weight_kg — it's
+        # covered separately below by the nonpositive-weight check, not here.
+        if value is None or value == "":
+            flags.append(ValidationFlag(
+                field=field_name,
+                severity="blocking",
+                message=_msg(lang, "required_missing", _field_label(lang, field_name)),
+                rule="required",
+            ))
 
     if record.material_type and record.material_type not in ALLOWED_MATERIALS:
         flags.append(ValidationFlag(
             field="material_type",
             severity="blocking",
             message=_msg(lang, "material_invalid", record.material_type),
+            rule="required",
         ))
 
     if record.weight_kg is not None:
@@ -87,12 +90,14 @@ def validate_record(record: IntakeRecord, lang: str = "en") -> list[ValidationFl
                 field="weight_kg",
                 severity="blocking",
                 message=_msg(lang, "weight_nonpositive"),
+                rule="weight",
             ))
         elif record.weight_kg < MIN_PLAUSIBLE_KG or record.weight_kg > MAX_PLAUSIBLE_KG:
             flags.append(ValidationFlag(
                 field="weight_kg",
                 severity="warning",
                 message=_msg(lang, "weight_range", record.weight_kg),
+                rule="weight",
             ))
 
     if record.delivery_date:
@@ -102,12 +107,14 @@ def validate_record(record: IntakeRecord, lang: str = "en") -> list[ValidationFl
                 field="delivery_date",
                 severity="blocking",
                 message=_msg(lang, "date_invalid"),
+                rule="date",
             ))
         elif parsed > date.today():
             flags.append(ValidationFlag(
                 field="delivery_date",
                 severity="warning",
                 message=_msg(lang, "date_future"),
+                rule="date",
             ))
 
     return flags

@@ -3,6 +3,7 @@ import json
 
 import httpx
 
+from .. import config
 from .common import CONFIDENCE_FIELDS, RECORD_PROPERTIES, SYSTEM_PROMPT, ProviderError
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -59,9 +60,10 @@ def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dic
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/",
         "X-Title": "Groundtruth",
     }
+    if config.OPENROUTER_HTTP_REFERER:
+        headers["HTTP-Referer"] = config.OPENROUTER_HTTP_REFERER
 
     try:
         response = httpx.post(API_URL, json=payload, headers=headers, timeout=25)
@@ -76,9 +78,18 @@ def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dic
     if not choices:
         raise ProviderError(f"OpenRouter returned no choices: {body}")
 
-    content = choices[0].get("message", {}).get("content", "")
+    choice = choices[0]
+    content = choice.get("message", {}).get("content", "")
     if not content:
         raise ProviderError("OpenRouter returned an empty response.")
+
+    if choice.get("finish_reason") == "length":
+        # The response was cut off by max_tokens, not genuinely malformed — a
+        # clearer, more actionable error than a generic JSON-parse failure.
+        raise ProviderError(
+            "OpenRouter response was truncated (hit the max_tokens limit) before it "
+            "finished; the ticket's text may be unusually long."
+        )
 
     try:
         args = _extract_json(content)

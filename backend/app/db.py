@@ -20,13 +20,24 @@ logger = logging.getLogger("intake_agent.db")
 
 ENCRYPTED_FIELDS = ("source_name", "truck_or_driver_id", "notes")
 
+
+class EncryptionNotConfiguredError(Exception):
+    """Raised instead of ever writing source_name/truck_or_driver_id/notes in
+    plaintext. Previously, an unset ENCRYPTION_KEY only logged a warning and
+    let the write proceed unencrypted — a fail-open default for data the
+    project's own SECURITY.md documents as encrypted at rest. Refusing the
+    write is the fail-secure equivalent of DEMO_API_KEY being unset making
+    every request 401: missing config blocks the operation, it doesn't
+    silently downgrade its guarantees."""
+
+
 _fernet = None
 if config.ENCRYPTION_KEY:
     from cryptography.fernet import Fernet
 
     _fernet = Fernet(config.ENCRYPTION_KEY.encode())
 else:
-    logger.warning("ENCRYPTION_KEY not set: records will be stored in plaintext.")
+    logger.warning("ENCRYPTION_KEY not set: confirming records will be refused until it is configured.")
 
 
 def _encrypt(value: str | None) -> str | None:
@@ -112,6 +123,11 @@ def list_runs(client_id: str, limit: int = 20) -> list[dict]:
 
 
 def save_record(client_id: str, run_id: int | None, record: dict) -> int:
+    if _fernet is None:
+        raise EncryptionNotConfiguredError(
+            "ENCRYPTION_KEY is not set. Refusing to write source_name/truck_or_driver_id/"
+            "notes without encryption at rest — set ENCRYPTION_KEY and retry."
+        )
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO records (client_id, run_id, created_at, material_type, weight_kg, source_name, "

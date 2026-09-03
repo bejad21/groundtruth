@@ -79,3 +79,34 @@ def test_health_endpoint_needs_no_auth(client):
     # Health should stay publicly checkable without a key, unlike the data endpoints.
     res = client.get("/api/health")
     assert res.status_code == 200
+
+
+def test_repeated_failed_auth_attempts_are_eventually_throttled():
+    """Previously unlimited: an attacker could send unbounded wrong-Authorization
+    attempts against any protected endpoint with zero throttling. A dedicated
+    TestClient (own IP-keyed budget) isolates this from the other auth tests
+    above, which already spend a few failed attempts of their own."""
+    with TestClient(app) as throttle_client:
+        statuses = [
+            throttle_client.get("/api/records", headers={"Authorization": "Bearer wrong-key"}).status_code
+            for _ in range(40)
+        ]
+
+    assert 401 in statuses  # early attempts are still real auth failures
+    assert 429 in statuses  # but it does eventually throttle
+    # Once throttled, it stays throttled for the rest of the burst rather than
+    # flapping back to 401.
+    first_429 = statuses.index(429)
+    assert all(s == 429 for s in statuses[first_429:])
+
+
+def test_valid_requests_do_not_count_against_the_auth_failure_budget():
+    """Legitimate, successfully-authenticated traffic must not be throttled by
+    the failed-auth counter — only actual failures should count against it."""
+    with TestClient(app) as steady_client:
+        statuses = [
+            steady_client.get("/api/records", headers={"Authorization": f"Bearer {VALID_KEY}"}).status_code
+            for _ in range(40)
+        ]
+
+    assert all(s == 200 for s in statuses)

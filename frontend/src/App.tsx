@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { checkHealth, confirmRecord, extractTicket } from './api/client';
+import { materialLabel, toCanonicalMaterial } from './i18n/material';
 import type { ExtractResponse, IntakeRecord, ToolTraceStep } from './types';
 import { MATERIAL_OPTIONS } from './types';
 import './styles/theme.css';
@@ -38,6 +39,7 @@ const copy = {
     statusReview: 'Needs review', statusClean: 'Passed automatically', passed: (ok: number, total: number) => `${ok} / ${total} rules passed`, confidence: 'confidence',
     labels: { material_type: 'Material type', weight_kg: 'Net weight', source_name: 'Source / farm', truck_or_driver_id: 'Truck / driver ID', delivery_date: 'Delivery date', notes: 'Notes' } as Record<FieldKey, string>,
     kg: 'KG', low: 'CHECK', editHint: 'Low confidence — compare with ticket', confirm: 'Confirm intake record',
+    weightInvalid: 'Enter a valid number.',
     confirmNote: 'This action writes the reviewed record to the intake ledger.', newRun: 'Start new run',
     confirmedEyebrow: 'RECORD ACCEPTED', confirmedTitle: 'Load cleared for intake.',
     confirmedSub: 'The reviewed record is now available to downstream operations. The source ticket and full agent trace remain attached for audit.',
@@ -65,6 +67,7 @@ const copy = {
     statusReview: 'يحتاج مراجعة', statusClean: 'اجتاز تلقائياً', passed: (ok: number, total: number) => `اجتاز ${ok} / ${total} قواعد`, confidence: 'درجة الثقة',
     labels: { material_type: 'نوع المادة', weight_kg: 'الوزن الصافي', source_name: 'المصدر / المزرعة', truck_or_driver_id: 'معرّف الشاحنة / السائق', delivery_date: 'تاريخ التسليم', notes: 'ملاحظات' } as Record<FieldKey, string>,
     kg: 'كجم', low: 'تحقق', editHint: 'ثقة منخفضة — قارن بالتذكرة', confirm: 'اعتماد سجل الاستلام',
+    weightInvalid: 'أدخل رقماً صالحاً.',
     confirmNote: 'سيتم حفظ السجل المراجع في دفتر الاستلام.', newRun: 'بدء عملية جديدة',
     confirmedEyebrow: 'تم قبول السجل', confirmedTitle: 'الشحنة جاهزة للاستلام.',
     confirmedSub: 'السجل المراجع متاح الآن لفريق التشغيل. ستبقى التذكرة الأصلية وسجل الوكيل الكامل مرفقين لأغراض التدقيق.',
@@ -74,7 +77,9 @@ const copy = {
   },
 };
 
-const RULE_KEYS = ['required', 'weight', 'date', 'material'];
+// The 4 real check categories the backend can flag (matches copy.checksList) —
+// "confidence" isn't a validation_flags entry, it's derived from field_confidences.
+const RULE_CATEGORIES = ['required', 'weight', 'date', 'confidence'] as const;
 const SAMPLE_URLS = { clean: '/samples/ticket_clean.png', messy: '/samples/ticket_messy.png' } as const;
 const FIELD_KEYS: FieldKey[] = ['material_type', 'weight_kg', 'source_name', 'truck_or_driver_id', 'delivery_date', 'notes'];
 
@@ -88,14 +93,6 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     spark: <><path d="m12 3 1.3 4.2L17 9l-3.7 1.8L12 15l-1.3-4.2L7 9l3.7-1.8z"/><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7z"/></>,
   };
   return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
-}
-
-function humanizeMaterial(value: string): string {
-  return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function snakeMaterial(value: string): string {
-  return value.trim().toLowerCase().replaceAll(/\s+/g, '_');
 }
 
 function DocumentView({ previewUrl, mimeType, scanning }: { previewUrl: string | null; mimeType: string; scanning: boolean }) {
@@ -126,6 +123,10 @@ export default function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<ExtractResponse | null>(null);
   const [record, setRecord] = useState<IntakeRecord | null>(null);
+  // Raw text of the weight input, tracked separately from record.weight_kg so
+  // invalid input (non-numeric, empty) can be shown and blocked without ever
+  // writing NaN/null into the record silently.
+  const [weightDraft, setWeightDraft] = useState('');
   const [revealedSteps, setRevealedSteps] = useState<(ToolTraceStep & { atMs: number })[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [confirmedId, setConfirmedId] = useState<number | null>(null);
@@ -187,7 +188,12 @@ export default function App() {
       }
       await new Promise((resolve) => window.setTimeout(resolve, 500));
       setResult(res);
-      setRecord({ ...res.record, material_type: humanizeMaterial(res.record.material_type) });
+      // Keep material_type canonical (snake_case) in state; the display label
+      // is derived from it + the current language wherever it's rendered, so
+      // it stays correct across language toggles instead of being baked into
+      // one language here.
+      setRecord(res.record);
+      setWeightDraft(String(res.record.weight_kg ?? ''));
       setPhase('review');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -231,6 +237,7 @@ export default function App() {
     setError('');
     setResult(null);
     setRecord(null);
+    setWeightDraft('');
     setConfirmedId(null);
     setPhase('empty');
   }
@@ -258,19 +265,41 @@ export default function App() {
     return fields.size;
   }, [result]);
 
-  const rulesPassed = Math.max(0, RULE_KEYS.length - (result?.validation_flags.length ?? 0));
+  // Counts distinct failed rule *categories*, not raw flag count — two flags
+  // in the same category (e.g. two weight complaints) is one failed rule, not
+  // two — and folds in the confidence-gate result, which the old formula
+  // (RULE_KEYS.length - validation_flags.length) ignored entirely.
+  const rulesPassed = useMemo(() => {
+    if (!result) return 0;
+    const failedRules = new Set<string>(result.validation_flags.map((f) => f.rule));
+    if (result.field_confidences.some((f) => f.confidence < 0.75)) failedRules.add('confidence');
+    return RULE_CATEGORIES.length - failedRules.size;
+  }, [result]);
+
+  const weightInvalid = weightDraft.trim() === '' || !Number.isFinite(Number(weightDraft));
 
   function updateField(key: FieldKey, value: string) {
-    setRecord((prev) => prev && ({ ...prev, [key]: key === 'weight_kg' ? Number(value) : value }));
+    if (key === 'weight_kg') {
+      setWeightDraft(value);
+      const parsed = Number(value);
+      if (value.trim() !== '' && Number.isFinite(parsed)) {
+        setRecord((prev) => prev && ({ ...prev, weight_kg: parsed }));
+      }
+      return;
+    }
+    setRecord((prev) => prev && ({ ...prev, [key]: value }));
   }
 
   async function handleConfirm() {
-    if (!record) return;
+    if (!record || weightInvalid) return;
     setConfirming(true);
     setError('');
     try {
-      const submission = { ...record, material_type: snakeMaterial(record.material_type) };
+      const submission = { ...record, material_type: toCanonicalMaterial(record.material_type) };
       const { record_id } = await confirmRecord(submission, result?.run_id ?? null, lang);
+      // Keep the canonical value in state (not whatever the input happened to
+      // display) so the confirmed receipt localizes correctly too.
+      setRecord(submission);
       setConfirmedId(record_id);
       setConfirmedAt(new Date());
       setPhase('confirmed');
@@ -410,7 +439,7 @@ export default function App() {
                     </div>
                     <div className={`review-status ${flaggedCount === 0 ? 'is-clean' : ''}`}>
                       <span><i />{flaggedCount > 0 ? t.statusReview : t.statusClean}</span>
-                      <small><Icon name="check" size={13} />{t.passed(rulesPassed, RULE_KEYS.length)}</small>
+                      <small><Icon name="check" size={13} />{t.passed(rulesPassed, RULE_CATEGORIES.length)}</small>
                     </div>
                   </div>
                   {error && <div className="error-banner"><Icon name="shield" size={14} /><span><strong>{t.errorTitle}: </strong>{error}</span></div>}
@@ -427,27 +456,37 @@ export default function App() {
                           const conf = confidenceByField[key];
                           const low = conf !== undefined && conf < 75;
                           const messages = flagsByField[key];
+                          const weightBad = key === 'weight_kg' && weightInvalid;
+                          const hint = weightBad ? t.weightInvalid : (messages?.[0] ?? t.editHint);
                           return (
-                            <label key={key} className={`field ${low || messages ? 'field-low' : ''}`}>
-                              <span className="field-label">{t.labels[key]}{(low || messages) && <em>{t.low}</em>}</span>
+                            <label key={key} className={`field ${low || messages || weightBad ? 'field-low' : ''}`}>
+                              <span className="field-label">{t.labels[key]}{(low || messages || weightBad) && <em>{t.low}</em>}</span>
                               <span className="input-wrap">
-                                <input value={String(record[key] ?? '')} onChange={(e) => updateField(key, e.target.value)} list={key === 'material_type' ? 'material-options' : undefined} />
+                                <input
+                                  value={
+                                    key === 'material_type' ? materialLabel(record.material_type, lang)
+                                      : key === 'weight_kg' ? weightDraft
+                                      : String(record[key] ?? '')
+                                  }
+                                  onChange={(e) => updateField(key, e.target.value)}
+                                  list={key === 'material_type' ? 'material-options' : undefined}
+                                />
                                 {key === 'weight_kg' && <b className="unit">{t.kg}</b>}
                               </span>
                               {conf !== undefined && (
                                 <span className="confidence-row"><i><b style={{ width: `${conf}%` }} /></i><small>{conf}% {t.confidence}</small></span>
                               )}
-                              {(low || messages) && <span className="field-hint">↳ {messages?.[0] ?? t.editHint}</span>}
+                              {(low || messages || weightBad) && <span className="field-hint">↳ {hint}</span>}
                             </label>
                           );
                         })}
                         <datalist id="material-options">
-                          {MATERIAL_OPTIONS.map((opt) => <option key={opt} value={humanizeMaterial(opt)} />)}
+                          {MATERIAL_OPTIONS.map((opt) => <option key={opt} value={materialLabel(opt, lang)} />)}
                         </datalist>
                       </div>
                       <div className="confirm-row">
                         <p><Icon name="shield" />{t.confirmNote}</p>
-                        <button className="confirm-button" onClick={handleConfirm} disabled={confirming}>
+                        <button className="confirm-button" onClick={handleConfirm} disabled={confirming || weightInvalid}>
                           <span>{t.confirm}</span><Icon name="arrow" />
                         </button>
                       </div>
@@ -465,7 +504,7 @@ export default function App() {
                   <div className="receipt">
                     <div className="receipt-head"><span>{t.record} GT-{confirmedId}</span><strong><i />{t.accepted}</strong></div>
                     <div className="receipt-primary">
-                      <div><span>{t.labels.material_type}</span><b>{record.material_type}</b></div>
+                      <div><span>{t.labels.material_type}</span><b>{materialLabel(record.material_type, lang)}</b></div>
                       <div><span>{t.labels.weight_kg}</span><b>{record.weight_kg} {t.kg}</b></div>
                     </div>
                     <div className="receipt-meta">

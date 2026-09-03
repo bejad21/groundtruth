@@ -27,10 +27,14 @@ class FieldConfidence(BaseModel):
     reason: str = ""
 
 
+RuleCategory = Literal["required", "weight", "date"]
+
+
 class ValidationFlag(BaseModel):
     field: str
     severity: Severity
     message: str
+    rule: RuleCategory
 
 
 class ToolTraceStep(BaseModel):

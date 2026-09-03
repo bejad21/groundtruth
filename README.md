@@ -58,6 +58,7 @@ backend/    FastAPI. /api/extract runs the agent, /api/confirm re-validates, sav
                          range, category allow-list, date sanity)
   app/db.py              SQLite persistence, every table scoped by client_id
   app/security.py        magic-byte upload verification, per-IP rate limiting
+                         (extraction requests and failed auth attempts)
 ```
 
 ### Why a provider chain instead of one hardcoded SDK call
@@ -69,8 +70,8 @@ the next one on any failure, logging each attempt (with per-call latency) into t
 visible agent trace. Adding a new provider (Claude, OpenAI, a self-hosted model) is a
 new file with the same signature added to the chain, not a rewrite.
 
-**Current chain: Gemini (flash) → Gemini (flash-lite) → OpenRouter (Nemotron VL,
-free) → OpenRouter (Gemma, free).** This project runs on free-tier models only.
+**Current chain: Gemini (flash) → Gemini (flash-lite) → OpenRouter (Nemotron 3 Nano
+Omni, free) → OpenRouter (Gemma, free).** This project runs on free-tier models only.
 Groq was tried as a third provider first, but its free tier turned out to have no
 vision-capable model, confirmed by testing it against a real image and watching it
 reject the request outright. It was replaced with OpenRouter, which aggregates
@@ -78,9 +79,18 @@ several providers' free vision-capable models behind one API — verified live, 
 just configured, by forcing Gemini to fail and confirming OpenRouter correctly
 extracted every field from a real ticket. The two OpenRouter models trade off
 differently in practice: Gemma is the stronger general-purpose model on paper but was
-consistently rate-limited on the shared free pool during testing, while Nemotron-VL
-succeeded immediately — so Nemotron-VL is the primary and Gemma the fallback, a
-reliability-over-theoretical-quality call made from real test data, not guesswork.
+consistently rate-limited on the shared free pool during testing, while the Nemotron
+line succeeded immediately — so a Nemotron model is the primary and Gemma the
+fallback, a reliability-over-theoretical-quality call made from real test data, not
+guesswork.
+
+**Free-tier model IDs churn.** The original primary here, `nvidia/nemotron-nano-12b-v2-vl:free`,
+was silently removed from OpenRouter's catalog after this project was first built —
+not rate-limited, gone (`404 No endpoints found`, confirmed live). Swapped to
+`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, verified against a real ticket
+image through the actual extraction prompt before being made the default. Run
+`python scripts/check_openrouter_models.py` periodically (or on a schedule) so the
+next catalog change gets caught before a real request does.
 
 ## Setup
 
@@ -123,14 +133,32 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-26 tests, all backend logic that matters if it silently breaks: the validation
+66 tests, all backend logic that matters if it silently breaks: the validation
 rules (including that Arabic messages are genuinely different strings, not the
 English ones relabeled), the encryption round-trip (reads the raw `.db` file
 directly to confirm ciphertext, not just that the API decrypts correctly), the
-magic-byte upload check, the rate limiter, and — the most important set — the
-access-control regression tests. Those last ones are written directly against the
-real vulnerability described in [SECURITY.md](./SECURITY.md): if the header-spoofing
-attack that used to work ever starts working again, `test_auth.py` goes red.
+magic-byte upload check, the rate limiter, the provider chain's failover behavior
+(including what happens when a provider returns a malformed response instead of a
+clean error), and — the most important set — the access-control regression tests.
+Those last ones are written directly against the real vulnerability described in
+[SECURITY.md](./SECURITY.md): if the header-spoofing attack that used to work ever
+starts working again, `test_auth.py` goes red.
+
+Also covered: `deploy/render.yaml` is parsed and checked against every secret the
+app actually reads at runtime (`test_deploy_config.py`), and the `/api/records` and
+`/api/runs` pagination limits are tested against negative and oversized values, not
+just the happy path.
+
+```bash
+cd frontend
+npm test
+```
+
+16 more tests on the frontend: the material-type localization bug (an extracted
+field staying in English after switching the whole UI to Arabic), the weight field
+rejecting non-numeric input instead of silently sending `NaN` to the backend, and
+the review screen's pass count matching what the backend actually flagged instead
+of a fixed subtraction that ignored confidence scores.
 
 ## What the UI actually shows
 
@@ -185,8 +213,12 @@ function, not a rearchitecture.
 ## Deployment (free tier)
 
 - **Backend:** `deploy/render.yaml` deploys `backend/` to Render's free web service
-  tier. Set `GEMINI_API_KEY` and `OPENROUTER_API_KEY` as secret env vars in the Render
-  dashboard (not committed). Update `CORS_ORIGINS` to the deployed frontend URL.
+  tier. Render's Blueprint UI prompts for four secrets when you deploy from this
+  file: `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEMO_API_KEY`, and `ENCRYPTION_KEY`.
+  All four matter, not just the two provider keys: a deploy missing `DEMO_API_KEY`
+  locks out every request, and one missing `ENCRYPTION_KEY` now gets refused outright
+  instead of silently storing records in plaintext (see Security posture below).
+  Update `CORS_ORIGINS` to the deployed frontend URL.
 - **Frontend:** `frontend/vercel.json` is ready for Vercel; set `VITE_API_BASE` to the
   Render backend URL as a build-time env var. Cloudflare Pages works the same way with
   its own dashboard env var UI.
@@ -211,15 +243,20 @@ flag. Summary:
 - **Encryption at rest:** `source_name`, `truck_or_driver_id`, and `notes` are
   encrypted with Fernet before being written to SQLite. Verified by reading the raw
   `.db` file directly and confirming the stored value is ciphertext, then confirming
-  the authenticated API returns the correct plaintext.
+  the authenticated API returns the correct plaintext. If `ENCRYPTION_KEY` isn't set,
+  `/api/confirm` now refuses the write outright (a `503`, not a silent plaintext
+  fallback). Verified live by unsetting the key against a running server and
+  confirming both the clean error and that nothing was persisted.
 - **Secrets:** API keys live only in `.env` files (gitignored, never committed) or
   the hosting provider's own secret env var store. Never returned in any API response.
 - **Input handling:** uploads are capped at 8MB, and the file's actual content is
   checked against its magic bytes (`app/security.py: sniff_mime`) rather than trusting
   the client-supplied Content-Type header, since that header is trivial to spoof.
 - **Abuse:** a per-IP rate limiter on `/api/extract` (`app/security.py: RateLimiter`,
-  10 req/min). In-memory and per-process — a distributed deployment needs shared
-  state (Redis) instead.
+  10 req/min), plus a separate limiter on repeated failed authentication attempts
+  (20/min per IP) so a wrong key can't be brute-forced without limit. Both are
+  in-memory and per-process — a distributed deployment needs shared state (Redis)
+  instead.
 - **Data in transit:** TLS terminated by the hosting provider.
 - **Concurrency bug caught during testing, not shipped:** the extract route originally
   called the LLM SDK synchronously inside an `async def` handler, which blocked

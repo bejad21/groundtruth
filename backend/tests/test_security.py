@@ -44,3 +44,30 @@ def test_rate_limiter_scopes_by_key():
     assert limiter.allow("client-a") is True
     assert limiter.allow("client-b") is True  # different key, independent budget
     assert limiter.allow("client-a") is False
+
+
+def test_count_reflects_hits_recorded_by_allow():
+    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    assert limiter.count("k") == 0
+    limiter.allow("k")
+    limiter.allow("k")
+    assert limiter.count("k") == 2
+
+
+def test_count_does_not_itself_consume_budget():
+    """count() is a peek — calling it repeatedly must not use up the window."""
+    limiter = RateLimiter(max_requests=1, window_seconds=60)
+    limiter.count("k")
+    limiter.count("k")
+    limiter.count("k")
+    assert limiter.count("k") == 0
+    assert limiter.allow("k") is True  # budget untouched by the peeks above
+
+
+def test_count_is_scoped_by_key():
+    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    limiter.allow("client-a")
+    limiter.allow("client-a")
+    limiter.allow("client-b")
+    assert limiter.count("client-a") == 2
+    assert limiter.count("client-b") == 1
