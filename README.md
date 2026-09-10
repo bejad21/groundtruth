@@ -95,3 +95,4 @@ Full detail, including the honest gaps, is in [SECURITY.md](./SECURITY.md). Summ
 ## Deployment
 
 Not currently hosted anywhere, but ready to deploy: `deploy/render.yaml` is a Render blueprint for the backend, and `frontend/vercel.json` is a matching config for the frontend on Vercel. Render's blueprint prompts for four secrets: the Gemini and OpenRouter API keys, the demo bearer token, and the encryption key. All four are required, not just the two provider keys. Set `VITE_API_BASE` on the frontend host to point at the deployed backend URL.
+
