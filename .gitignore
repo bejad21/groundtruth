@@ -11,5 +11,4 @@ dist/
 server.log
 vite.log
 .pytest_cache/
-.impeccable/
 *.tsbuildinfo
