@@ -1,19 +1,15 @@
-"""Integration tests for access control. These are the regression tests for the
-real vulnerability caught during development: every data endpoint used to trust a
-client-supplied X-Client-Id header, so anyone could read another client's records
-by naming a different ID. If these tests ever go red, that gap is back."""
+"""Integration tests for API-key auth and per-client access control."""
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
-VALID_KEY = "test-key-for-pytest-only"  # set in conftest.py's DEMO_API_KEY
+VALID_KEY = "test-key-for-pytest-only"  # matches DEMO_API_KEY in conftest.py
 
 
 @pytest.fixture(scope="module")
 def client():
-    # Used as a context manager so the app's lifespan (db.init_db()) actually runs;
-    # a bare TestClient(app) never fires startup, and every query would 500.
+    # The context manager is what runs the app lifespan (db.init_db()).
     with TestClient(app) as c:
         yield c
 
@@ -29,7 +25,6 @@ def test_wrong_token_is_rejected(client):
 
 
 def test_spoofed_client_id_header_alone_is_rejected(client):
-    """The exact attack the old code was vulnerable to: no credential, just a claimed identity."""
     res = client.get("/api/records", headers={"X-Client-Id": "someone-elses-client"})
     assert res.status_code == 401
 
@@ -76,33 +71,25 @@ def test_confirm_accepts_a_valid_record_and_persists_it(client):
 
 
 def test_health_endpoint_needs_no_auth(client):
-    # Health should stay publicly checkable without a key, unlike the data endpoints.
     res = client.get("/api/health")
     assert res.status_code == 200
 
 
 def test_repeated_failed_auth_attempts_are_eventually_throttled():
-    """Previously unlimited: an attacker could send unbounded wrong-Authorization
-    attempts against any protected endpoint with zero throttling. A dedicated
-    TestClient (own IP-keyed budget) isolates this from the other auth tests
-    above, which already spend a few failed attempts of their own."""
+    """Uses its own TestClient so earlier failed attempts don't count against this budget."""
     with TestClient(app) as throttle_client:
         statuses = [
             throttle_client.get("/api/records", headers={"Authorization": "Bearer wrong-key"}).status_code
             for _ in range(40)
         ]
 
-    assert 401 in statuses  # early attempts are still real auth failures
-    assert 429 in statuses  # but it does eventually throttle
-    # Once throttled, it stays throttled for the rest of the burst rather than
-    # flapping back to 401.
+    assert 401 in statuses
+    assert 429 in statuses
     first_429 = statuses.index(429)
     assert all(s == 429 for s in statuses[first_429:])
 
 
 def test_valid_requests_do_not_count_against_the_auth_failure_budget():
-    """Legitimate, successfully-authenticated traffic must not be throttled by
-    the failed-auth counter — only actual failures should count against it."""
     with TestClient(app) as steady_client:
         statuses = [
             steady_client.get("/api/records", headers={"Authorization": f"Bearer {VALID_KEY}"}).status_code

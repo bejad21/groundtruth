@@ -1,16 +1,11 @@
-"""Small, dependency-free hardening helpers for a public demo endpoint.
-
-Not a substitute for a real gateway (rate limiting here is per-process and
-resets on restart), but it stops the two cheapest ways to abuse a public demo:
-spoofed content-type uploads and naive request flooding.
-"""
+"""Upload sniffing and in-memory rate limiting for the public demo endpoint."""
 import time
 from collections import defaultdict, deque
 
 MAGIC_BYTES: dict[bytes, str] = {
     b"\x89PNG\r\n\x1a\n": "image/png",
     b"\xff\xd8\xff": "image/jpeg",
-    b"RIFF": "image/webp",  # followed by size + "WEBP", checked separately
+    b"RIFF": "image/webp",
     b"%PDF-": "application/pdf",
 }
 
@@ -29,15 +24,10 @@ def sniff_mime(body: bytes) -> str | None:
 
 
 class RateLimiter:
-    """Fixed-window per-key limiter. In-memory by design: fine for a single demo instance.
+    """Fixed-window per-key limiter, in-memory for a single instance.
 
-    Every key ever queried used to keep a dict entry forever, even once its
-    hits had all aged out of the window — a client hit once and never seen
-    again left a permanent, empty entry behind. Over a long-running process
-    seeing many distinct IPs, that's unbounded memory growth. Every
-    `sweep_interval`-th call now sweeps out any key whose most recent hit has
-    already expired, so total memory stays bounded by recent traffic rather
-    than by every key ever seen.
+    Every `sweep_interval` calls, keys whose hits have all expired are dropped
+    so memory stays bounded by recent traffic.
     """
 
     def __init__(
@@ -78,11 +68,7 @@ class RateLimiter:
         return allowed
 
     def count(self, key: str) -> int:
-        """Current hit count within the window, without recording a new hit.
-        Used to peek ("has this key already used up its budget?") before
-        deciding whether an attempt should count against it at all. Also
-        removes the key entirely once it has no hits left in the window,
-        rather than leaving a permanent empty entry behind."""
+        """Hit count within the window, without recording a hit. Drops the key once empty."""
         now = self._clock()
         hits = self._hits.get(key)
         if hits is None:
@@ -93,6 +79,5 @@ class RateLimiter:
         return len(hits)
 
     def tracked_key_count(self) -> int:
-        """How many distinct keys currently hold any state. Exposed for tests
-        (and operational introspection) to confirm memory stays bounded."""
+        """Number of keys currently tracked; used to check memory stays bounded."""
         return len(self._hits)

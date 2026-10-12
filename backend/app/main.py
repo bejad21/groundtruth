@@ -40,15 +40,9 @@ app.add_middleware(
 
 
 def _authenticated_client_id(request: Request) -> str:
-    """Resolve client_id from a possessed credential, never from a client-supplied
-    header. Previously this trusted an `X-Client-Id` header the caller could set to
-    any value, which made the per-client isolation in db.py decorative: anyone could
-    read or write another client's records just by naming a different ID. Now the
-    header is gone entirely; the ID is looked up server-side from the API key.
+    """Resolve client_id from the API key, never from a client-supplied header.
 
-    A valid key always succeeds here, regardless of how many prior failures came
-    from the same IP — only *failed* attempts are throttled below, so this can't
-    be used to lock a legitimate caller out of their own key."""
+    Only failed attempts are throttled, so a valid key always succeeds."""
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         client_id = config.CLIENT_API_KEYS.get(auth.removeprefix("Bearer ").strip())
@@ -131,10 +125,7 @@ async def confirm_record(request: Request, payload: ConfirmRequest, lang: str = 
 
 
 def _clamp_limit(limit: int, maximum: int = 100) -> int:
-    """Clamp to [1, maximum]. SQLite treats a negative LIMIT as "no limit at
-    all", so a bare `min(limit, maximum)` doesn't actually cap a negative
-    value — `?limit=-1` returned every row in the table instead of the
-    intended cap (confirmed live before this fix)."""
+    """Clamp to [1, maximum]. SQLite treats a negative LIMIT as unlimited."""
     return max(1, min(limit, maximum))
 
 

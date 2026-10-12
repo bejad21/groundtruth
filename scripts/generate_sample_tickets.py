@@ -1,7 +1,4 @@
-"""Generate synthetic waste intake ticket images for testing the extraction agent.
-Not real scanned documents - drawn to look like a filled-in paper weighbridge ticket
-so the demo has something concrete to upload without needing a real company's data.
-"""
+"""Generate synthetic weighbridge ticket images for the demo and tests."""
 import os
 
 from PIL import Image, ImageDraw, ImageFont
@@ -35,7 +32,7 @@ def draw_ticket(path: str, fields: dict, messy: bool = False) -> None:
         d.text((60, y), f"{label}:", font=label_font, fill="black")
         fill = "black"
         if messy and label == "Truck / Driver ID":
-            fill = "gray"  # simulate faded/smudged handwriting
+            fill = "gray"  # faded handwriting
         d.text((320, y - 2), str(value), font=value_font, fill=fill)
         y += 60
 

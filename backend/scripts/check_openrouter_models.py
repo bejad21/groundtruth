@@ -1,17 +1,9 @@
-"""Catches OpenRouter free-tier catalog churn before it silently breaks the
-failover chain in production.
+"""Check that the configured OpenRouter models still exist in OpenRouter's catalog.
 
-This is exactly the bug found during the audit: `OPENROUTER_MODEL` pointed at
-`nvidia/nemotron-nano-12b-v2-vl:free`, a model OpenRouter had quietly removed
-from its catalog entirely (not rate-limited — gone). Every extract request
-that fell through to OpenRouter got a 404 with no earlier warning.
-
-Run manually or on a schedule (cron / CI) against real credentials, from the
-`backend/` directory:
+Run from the `backend/` directory with real credentials:
     python scripts/check_openrouter_models.py
 
-Exits non-zero and prints which configured model IDs no longer exist in
-OpenRouter's live catalog, so this gets caught long before a real user does.
+Exits non-zero and lists any configured model IDs that are no longer available.
 """
 import sys
 from pathlib import Path
@@ -24,7 +16,7 @@ MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
 def find_missing_models(configured_models: list[str], catalog_ids: set[str]) -> list[str]:
-    """Pure, testable core: which of the configured model IDs aren't in the catalog."""
+    """Return the configured model IDs that are not in the catalog."""
     return [m for m in configured_models if m and m not in catalog_ids]
 
 
@@ -35,7 +27,7 @@ def fetch_catalog_ids(api_key: str, timeout: float = 10.0) -> set[str]:
 
 
 def main() -> int:
-    from app import config  # local import so this module stays importable/testable with no env required
+    from app import config  # deferred so importing this module needs no env
 
     if not config.OPENROUTER_API_KEY:
         print("OPENROUTER_API_KEY is not set — skipping (nothing to check against).")

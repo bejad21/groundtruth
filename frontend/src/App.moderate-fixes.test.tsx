@@ -59,9 +59,6 @@ describe('rules-passed counter accuracy', () => {
   });
 
   it('counts two flags in the same rule category as one failure, not two', async () => {
-    // Same shape a hand-edited record could produce: two separate weight
-    // complaints. The old counter (RULE_KEYS.length - validation_flags.length)
-    // would double-subtract these and wrongly report 2/4.
     const response: ExtractResponse = {
       ...CLEAN_RESPONSE,
       validation_flags: [
@@ -76,7 +73,7 @@ describe('rules-passed counter accuracy', () => {
     expect(screen.getByText('3 / 4 rules passed')).toBeInTheDocument();
   });
 
-  it('counts a low-confidence field as a failed rule, not just flagged fields (the old counter ignored confidence entirely)', async () => {
+  it('counts a low-confidence field as a failed rule', async () => {
     const response: ExtractResponse = {
       ...CLEAN_RESPONSE,
       field_confidences: CLEAN_RESPONSE.field_confidences.map((f) =>
@@ -140,9 +137,7 @@ describe('weight field rejects non-numeric input', () => {
 
 describe('confidence threshold comes from the backend response, not a hardcoded 0.75', () => {
   it('flags a field as low-confidence using the response threshold, not a fixed 0.75', async () => {
-    // 0.8 confidence would NOT be flagged under a hardcoded 0.75 threshold,
-    // but the backend says its real threshold for this run was 0.9 — so it
-    // must be flagged. This is the case that tells the two implementations apart.
+    // 0.8 would pass a fixed 0.75 threshold but fails the response's 0.9.
     const response: ExtractResponse = {
       ...CLEAN_RESPONSE,
       confidence_threshold: 0.9,
@@ -155,14 +150,10 @@ describe('confidence threshold comes from the backend response, not a hardcoded 
     await runToReviewScreen(user, response);
 
     expect(screen.getByText('80% confidence')).toBeInTheDocument();
-    // The rules-passed counter must agree: the confidence category failed too.
     expect(screen.getByText('3 / 4 rules passed')).toBeInTheDocument();
   });
 
   it('does not flag the same 0.8-confidence field when the response threshold is lower', async () => {
-    // Same field, same confidence, but this run's real threshold (0.6) means
-    // 0.8 clears it — proving the frontend reacts to the response value both
-    // ways, not just hardcoding a different fixed number.
     const response: ExtractResponse = {
       ...CLEAN_RESPONSE,
       confidence_threshold: 0.6,

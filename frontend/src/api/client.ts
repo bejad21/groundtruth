@@ -3,11 +3,7 @@ import type { ExtractResponse, IntakeRecord } from '../types';
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 const API_KEY = import.meta.env.VITE_API_KEY ?? '';
 
-// A build-time public key is the honest limit of a frontend-only demo: it stops a
-// stray, unauthenticated caller from hitting the backend, but doesn't hide the key
-// from someone who reads the shipped JS bundle. A real deployment issues the key
-// through an authenticated login instead of shipping it in a static build. Documented
-// in SECURITY.md rather than left implicit.
+// The key is embedded in the JS bundle at build time, so it is not secret (see SECURITY.md).
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return { ...extra, Authorization: `Bearer ${API_KEY}` };
 }

@@ -13,7 +13,7 @@ RESPONSE_SCHEMA = {
 
 
 def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dict:
-    import google.generativeai as genai  # local import so a missing/broken SDK only breaks this provider
+    import google.generativeai as genai  # imported lazily so a broken SDK only affects this provider
 
     if not api_key:
         raise ProviderError("Gemini API key is not configured.")
@@ -33,7 +33,7 @@ def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dic
             },
             request_options={"timeout": 15},
         )
-    except Exception as exc:  # noqa: BLE001 - normalized into ProviderError for the orchestrator
+    except Exception as exc:  # noqa: BLE001 - re-raised as ProviderError
         raise ProviderError(f"Gemini request failed: {exc}") from exc
 
     text = getattr(response, "text", None)

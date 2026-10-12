@@ -3,7 +3,7 @@ from datetime import date
 from .models import ALLOWED_MATERIALS, IntakeRecord, ValidationFlag
 
 MIN_PLAUSIBLE_KG = 1
-MAX_PLAUSIBLE_KG = 40000  # a large flatbed truck's realistic payload ceiling
+MAX_PLAUSIBLE_KG = 40000  # upper bound for a large flatbed truck
 
 REQUIRED_FIELDS = ["material_type", "weight_kg", "source_name", "truck_or_driver_id", "delivery_date"]
 
@@ -66,8 +66,7 @@ def validate_record(record: IntakeRecord, lang: str = "en") -> list[ValidationFl
 
     for field_name in REQUIRED_FIELDS:
         value = getattr(record, field_name)
-        # Note: 0 is a legitimate, non-missing value for weight_kg — it's
-        # covered separately below by the nonpositive-weight check, not here.
+        # 0 is not "missing"; the nonpositive-weight check below handles it.
         if value is None or value == "":
             flags.append(ValidationFlag(
                 field=field_name,

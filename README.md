@@ -2,21 +2,21 @@
 
 A document intake system: upload a photo or PDF of a delivery ticket, and an LLM agent reads it, extracts a structured record, checks it against business rules, and hands it back for a quick human confirmation. Fields the model isn't confident about get flagged for review before the record ships.
 
-Everything on screen is wired to a real backend. The screenshots below are actual runs, not mockups.
+The screenshots below are from live runs against the backend.
 
 | | |
 |---|---|
 | ![Screenshot of the upload screen before any document has been submitted](docs/screenshots/01-empty-state.png)<br>**1. Upload screen**: the starting point, before a document is submitted. | ![Screenshot of the review screen with one field flagged as low-confidence](docs/screenshots/02-review-flagged.png)<br>**2. Flagged review**: a real run against a smudged sample ticket. The flagged field, the warning, and the "2 fields need a second look" count all came from that actual response. |
-| ![Screenshot of the confirmation receipt after a record is approved](docs/screenshots/03-confirmed-receipt.png)<br>**3. Confirmed receipt**: after a human approves the record, showing the real database-assigned ID and timestamp. | ![Screenshot of the same interface in Arabic with right-to-left layout](docs/screenshots/04-arabic-rtl.png)<br>**4. Arabic (RTL)**: the same screen in Arabic, with the full layout mirrored, and not just the text translated. |
+| ![Screenshot of the confirmation receipt after a record is approved](docs/screenshots/03-confirmed-receipt.png)<br>**3. Confirmed receipt**: after a human approves the record, showing the real database-assigned ID and timestamp. | ![Screenshot of the same interface in Arabic with right-to-left layout](docs/screenshots/04-arabic-rtl.png)<br>**4. Arabic (RTL)**: the same screen in Arabic, with the layout mirrored as well as the text translated. |
 
 ## What it does
 
 - Reads a photographed or scanned document and pulls out a structured record (vendor, weight, date, and so on).
-- Tries multiple LLM providers in order and automatically falls back if one fails, so a single provider going down doesn't take the whole pipeline with it.
-- Cross-checks every extracted field against business rules (required fields, numeric ranges, valid dates, allowed categories) and flags anything that fails.
+- Tries multiple LLM providers in order and automatically falls back if one fails.
+- Checks the extracted record against business rules (required fields, weight range, valid dates, allowed materials) and flags anything that fails.
 - Routes low-confidence or rule-failing fields to a human for a quick edit before the record can be confirmed.
-- Keeps every database read and write scoped to a client ID, the same isolation pattern a real multi-tenant system uses.
-- Supports full English/Arabic bilingual UI, including complete right-to-left layout mirroring.
+- Keeps every database read and write scoped to a client ID.
+- English and Arabic UI, with right-to-left layout mirroring.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ backend/    FastAPI.
 
 The provider chain is Gemini (flash), then Gemini (flash-lite), then OpenRouter (Nemotron 3 Nano Omni), then OpenRouter (Gemma), all free-tier models. Each provider is a small file exposing the same `extract()` function, so adding a new one (Claude, OpenAI, a self-hosted model) means adding a file, not rewriting the chain. The failover path is tested by forcing a provider offline and confirming the next one in line picks up the request correctly.
 
-The original primary model here got pulled from OpenRouter's free catalog after this project was built, not rate-limited, just gone. `backend/scripts/check_openrouter_models.py` checks the configured models against OpenRouter's live catalog, so the next disappearance gets caught before a real request does.
+Free-tier models can disappear from OpenRouter's catalog without notice. `backend/scripts/check_openrouter_models.py` checks the configured models against the live catalog, so a removal is caught before a real request fails.
 
 ## Setup
 
@@ -72,18 +72,18 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-75 tests covering the validation rules, the encryption round-trip (checked by reading the raw `.db` file directly, not just trusting the API), the upload and rate-limit checks, provider failover (including a provider returning a malformed response instead of a clean error), the deploy config, and a set of access-control regression tests written directly against a real vulnerability described in [SECURITY.md](./SECURITY.md).
+75 tests covering the validation rules, the encryption round-trip (checked against the raw `.db` file as well as the API), the upload and rate-limit checks, provider failover (including a provider returning a malformed response instead of a clean error), the deployment config, and access-control regression tests for the issue described in [SECURITY.md](./SECURITY.md).
 
 ```bash
 cd frontend
 npm test
 ```
 
-18 tests on the frontend: a bug where an extracted field stayed in English after switching the whole UI to Arabic, the weight field rejecting non-numeric input instead of silently sending it to the backend, and the review screen's pass count matching what the backend actually flagged (using the confidence threshold the backend actually used for that run, not a guessed constant).
+18 frontend tests covering Arabic localization of extracted fields, weight input validation, and the review screen's rule counts, which use the confidence threshold returned by the backend.
 
 ## Security
 
-Full detail, including the honest gaps, is in [SECURITY.md](./SECURITY.md). Summary:
+Full detail, including known gaps, is in [SECURITY.md](./SECURITY.md). Summary:
 
 - **Access control:** every data endpoint requires a bearer token, and the client ID is resolved server-side from that key rather than trusted from a client-supplied header. The earlier version trusted a client-supplied header, which meant anyone could read another client's records by changing it. That's fixed and covered by a regression test.
 - **Encryption at rest:** personally identifying fields are encrypted with Fernet before being written to SQLite, confirmed by reading the raw database file and seeing ciphertext. If the encryption key isn't set, the app now refuses to save a record instead of silently storing it in plaintext.
@@ -94,5 +94,4 @@ Full detail, including the honest gaps, is in [SECURITY.md](./SECURITY.md). Summ
 
 ## Deployment
 
-Not currently hosted anywhere, but ready to deploy: `deploy/render.yaml` is a Render blueprint for the backend, and `frontend/vercel.json` is a matching config for the frontend on Vercel. Render's blueprint prompts for four secrets: the Gemini and OpenRouter API keys, the demo bearer token, and the encryption key. All four are required, not just the two provider keys. Set `VITE_API_BASE` on the frontend host to point at the deployed backend URL.
-
+Not currently hosted anywhere, but ready to deploy: `deploy/render.yaml` is a Render blueprint for the backend, and `frontend/vercel.json` is a matching config for the frontend on Vercel. Render's blueprint prompts for four secrets: the Gemini and OpenRouter API keys, the demo bearer token, and the encryption key. All four are required. Set `VITE_API_BASE` on the frontend host to point at the deployed backend URL.

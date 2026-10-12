@@ -38,9 +38,6 @@ def test_zero_or_negative_weight_is_blocking():
 
 
 def test_zero_weight_produces_exactly_one_flag_not_a_double_report():
-    """Pins the exact edge case the old required-field check's tangled boolean logic
-    existed to handle: weight_kg=0 must be flagged once (by the nonpositive-weight
-    check), not also separately reported as a missing required field."""
     flags = validate_record(_record(weight_kg=0))
     assert len(flags) == 1
 
@@ -67,8 +64,8 @@ def test_messages_localize_to_arabic():
     flags_en = validate_record(_record(weight_kg=61500), lang="en")
     flags_ar = validate_record(_record(weight_kg=61500), lang="ar")
     assert flags_en[0].message != flags_ar[0].message
-    assert "61500" in flags_ar[0].message  # the number itself isn't translated, the sentence around it is
-    assert any("؀" <= ch <= "ۿ" for ch in flags_ar[0].message)  # contains actual Arabic script
+    assert "61500" in flags_ar[0].message
+    assert any("؀" <= ch <= "ۿ" for ch in flags_ar[0].message)
 
 
 def test_unknown_lang_falls_back_to_english():

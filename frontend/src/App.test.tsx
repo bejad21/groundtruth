@@ -12,9 +12,7 @@ vi.mock('./api/client', () => ({
 
 import { confirmRecord, extractTicket } from './api/client';
 
-// Mirrors the real response I captured from a live run against ticket_messy.png
-// during manual testing (see the audit report) — a smudged-ticket record that
-// needs review, exactly the scenario where the Arabic-toggle bug showed up.
+// Fixture for a record that needs review (modeled on ticket_messy.png).
 const FAKE_RESPONSE: ExtractResponse = {
   record: {
     material_type: 'date_seed_kernels',

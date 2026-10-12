@@ -71,7 +71,7 @@ def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dic
         body = response.json()
     except httpx.HTTPStatusError as exc:
         raise ProviderError(f"OpenRouter request failed: {exc.response.status_code} {exc.response.text}") from exc
-    except Exception as exc:  # noqa: BLE001 - normalized into ProviderError for the orchestrator
+    except Exception as exc:  # noqa: BLE001 - re-raised as ProviderError
         raise ProviderError(f"OpenRouter request failed: {exc}") from exc
 
     choices = body.get("choices") or []
@@ -84,8 +84,7 @@ def extract(image_bytes: bytes, mime_type: str, model: str, api_key: str) -> dic
         raise ProviderError("OpenRouter returned an empty response.")
 
     if choice.get("finish_reason") == "length":
-        # The response was cut off by max_tokens, not genuinely malformed — a
-        # clearer, more actionable error than a generic JSON-parse failure.
+        # Cut off by max_tokens; report that instead of a generic JSON parse error.
         raise ProviderError(
             "OpenRouter response was truncated (hit the max_tokens limit) before it "
             "finished; the ticket's text may be unusually long."

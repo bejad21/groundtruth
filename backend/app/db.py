@@ -1,13 +1,8 @@
-"""SQLite persistence, deliberately minimal.
+"""SQLite persistence.
 
-Demonstrates a real per-tenant isolation pattern (every table is scoped by
-client_id, and every query filters on it) without pretending to be a full
-multi-tenant auth system. There's one demo client today; the column and the
-WHERE clause are the real part.
-
-Sensitive text fields (source_name, truck_or_driver_id, notes) are encrypted
-at rest with Fernet (AES-128-CBC + HMAC) when ENCRYPTION_KEY is configured,
-so a copy of the .db file alone doesn't expose them.
+Every table is scoped by client_id and every query filters on it.
+source_name, truck_or_driver_id and notes are encrypted at rest with Fernet
+(AES-128-CBC + HMAC) using ENCRYPTION_KEY.
 """
 import logging
 import sqlite3
@@ -22,13 +17,7 @@ ENCRYPTED_FIELDS = ("source_name", "truck_or_driver_id", "notes")
 
 
 class EncryptionNotConfiguredError(Exception):
-    """Raised instead of ever writing source_name/truck_or_driver_id/notes in
-    plaintext. Previously, an unset ENCRYPTION_KEY only logged a warning and
-    let the write proceed unencrypted — a fail-open default for data the
-    project's own SECURITY.md documents as encrypted at rest. Refusing the
-    write is the fail-secure equivalent of DEMO_API_KEY being unset making
-    every request 401: missing config blocks the operation, it doesn't
-    silently downgrade its guarantees."""
+    """Raised when a write would store encrypted fields in plaintext because ENCRYPTION_KEY is unset."""
 
 
 _fernet = None
@@ -51,7 +40,7 @@ def _decrypt(value: str | None) -> str | None:
         return value
     try:
         return _fernet.decrypt(value.encode()).decode()
-    except Exception:  # noqa: BLE001 - pre-encryption rows or a rotated key shouldn't crash a read
+    except Exception:  # noqa: BLE001 - tolerate pre-encryption rows and rotated keys
         return value
 
 
@@ -91,10 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_records_client ON records (client_id);
 def _connect():
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
-    # SQLite ignores declared FOREIGN KEY constraints unless this is set on
-    # every connection — it was never set, so records.run_id's reference to
-    # runs(id) was purely decorative: a record could point at a run_id that
-    # never existed. Enabling it makes the schema mean what it says.
+    # SQLite only enforces FOREIGN KEY constraints when this is set per connection.
     conn.execute("PRAGMA foreign_keys = ON;")
     try:
         yield conn

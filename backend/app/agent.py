@@ -15,8 +15,7 @@ MAX_ERROR_DETAIL_CHARS = 160
 
 
 def _summarize_error(exc: Exception) -> str:
-    """Providers wrap raw SDK exceptions, which can be many lines of stack/quota detail.
-    The trace is a user-facing log, not a debugger, so keep only the first sentence."""
+    """Keep only the first sentence of a provider error; the trace is user-facing."""
     text = str(exc).replace("\n", " ").strip()
     first_line = text.split(". ")[0].split("\n")[0]
     summary = first_line if first_line else text
@@ -85,10 +84,7 @@ def run_intake_agent(image_bytes: bytes, mime_type: str, lang: str = "en") -> Ag
             ))
             continue
         except (ValueError, TypeError) as exc:
-            # A provider that returns HTTP 200 with a malformed payload (a
-            # non-numeric confidence score, a weight that isn't a number) is
-            # just as unusable as one that raised ProviderError outright —
-            # treat it the same way: log it, fail over, don't crash the request.
+            # An HTTP 200 with a malformed payload is as unusable as a ProviderError: fail over.
             summary = _summarize_error(exc)
             errors.append(f"{name}: malformed response ({summary})")
             trace.append(ToolTraceStep(

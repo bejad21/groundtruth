@@ -77,8 +77,8 @@ const copy = {
   },
 };
 
-// The 4 real check categories the backend can flag (matches copy.checksList) —
-// "confidence" isn't a validation_flags entry, it's derived from field_confidences.
+// Rule categories shown in the UI (matches copy.checksList). "confidence" is derived
+// from field_confidences, not from validation_flags.
 const RULE_CATEGORIES = ['required', 'weight', 'date', 'confidence'] as const;
 const SAMPLE_URLS = { clean: '/samples/ticket_clean.png', messy: '/samples/ticket_messy.png' } as const;
 const FIELD_KEYS: FieldKey[] = ['material_type', 'weight_kg', 'source_name', 'truck_or_driver_id', 'delivery_date', 'notes'];
@@ -123,9 +123,7 @@ export default function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<ExtractResponse | null>(null);
   const [record, setRecord] = useState<IntakeRecord | null>(null);
-  // Raw text of the weight input, tracked separately from record.weight_kg so
-  // invalid input (non-numeric, empty) can be shown and blocked without ever
-  // writing NaN/null into the record silently.
+  // Raw weight input text, kept apart from record.weight_kg so invalid input never reaches the record.
   const [weightDraft, setWeightDraft] = useState('');
   const [revealedSteps, setRevealedSteps] = useState<(ToolTraceStep & { atMs: number })[]>([]);
   const [confirming, setConfirming] = useState(false);
@@ -180,18 +178,13 @@ export default function App() {
 
     try {
       const res = await extractTicket(file, lang);
-      // The backend resolves the whole trace at once; reveal it step by step
-      // so the run trace is still legible instead of dumping it all instantly.
+      // The backend returns the full trace at once; reveal it step by step.
       for (const step of res.trace) {
         await new Promise((resolve) => window.setTimeout(resolve, 420));
         setRevealedSteps((prev) => [...prev, { ...step, atMs: Date.now() - runStartRef.current }]);
       }
       await new Promise((resolve) => window.setTimeout(resolve, 500));
       setResult(res);
-      // Keep material_type canonical (snake_case) in state; the display label
-      // is derived from it + the current language wherever it's rendered, so
-      // it stays correct across language toggles instead of being baked into
-      // one language here.
       setRecord(res.record);
       setWeightDraft(String(res.record.weight_kg ?? ''));
       setPhase('review');
@@ -265,12 +258,8 @@ export default function App() {
     return fields.size;
   }, [result]);
 
-  // Counts distinct failed rule *categories*, not raw flag count — two flags
-  // in the same category (e.g. two weight complaints) is one failed rule, not
-  // two — and folds in the confidence-gate result, which the old formula
-  // (RULE_KEYS.length - validation_flags.length) ignored entirely. Reads the
-  // threshold from the response instead of a hardcoded guess, so it stays
-  // correct if CONFIDENCE_REVIEW_THRESHOLD is ever changed on the backend.
+  // Counts failed rule categories, not flags, and includes the confidence check
+  // using the threshold from the response.
   const rulesPassed = useMemo(() => {
     if (!result) return 0;
     const failedRules = new Set<string>(result.validation_flags.map((f) => f.rule));
@@ -299,8 +288,7 @@ export default function App() {
     try {
       const submission = { ...record, material_type: toCanonicalMaterial(record.material_type) };
       const { record_id } = await confirmRecord(submission, result?.run_id ?? null, lang);
-      // Keep the canonical value in state (not whatever the input happened to
-      // display) so the confirmed receipt localizes correctly too.
+      // Store the canonical value so the receipt localizes correctly.
       setRecord(submission);
       setConfirmedId(record_id);
       setConfirmedAt(new Date());

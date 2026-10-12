@@ -22,7 +22,7 @@ describe('materialLabel', () => {
       'other_organic_waste',
     ];
     const arabicLabels = materials.map((m) => materialLabel(m, 'ar'));
-    expect(new Set(arabicLabels).size).toBe(materials.length); // no duplicates/fallback collisions
+    expect(new Set(arabicLabels).size).toBe(materials.length);
     for (const label of arabicLabels) {
       expect([...label].some((ch) => ch >= '؀' && ch <= 'ۿ')).toBe(true);
     }
@@ -30,9 +30,7 @@ describe('materialLabel', () => {
 
   it('falls back to a humanized version of the raw value for an unrecognized material', () => {
     expect(materialLabel('scrap_metal', 'en')).toBe('Scrap Metal');
-    // No Arabic translation exists for a value outside the allow-list — falling back to
-    // the humanized value (rather than throwing, or silently showing raw snake_case) is
-    // the correct behavior for free-text edits.
+    // Values outside the allow-list have no Arabic label and fall back to the humanized text.
     expect(materialLabel('scrap_metal', 'ar')).toBe('Scrap Metal');
   });
 

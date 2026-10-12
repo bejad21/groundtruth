@@ -23,15 +23,10 @@ services:
         value: https://YOUR-FRONTEND-DOMAIN.pages.dev
       - key: CONFIDENCE_REVIEW_THRESHOLD
         value: "0.75"
-      # Both of these were missing from this file entirely until an audit caught it —
-      # Render's Blueprint UI only prompts for envVars actually listed here, so a
-      # deploy following this exact file would never have been asked for either one.
-      # DEMO_API_KEY unset -> config.CLIENT_API_KEYS is empty -> every request 401s.
-      # ENCRYPTION_KEY unset -> app/db.py now refuses to write records at all (see
-      # EncryptionNotConfiguredError) rather than silently storing them in plaintext.
+      # Render only prompts for env vars listed here. Without DEMO_API_KEY every data endpoint
+      # returns 401; without ENCRYPTION_KEY, saving a record is refused.
       - key: DEMO_API_KEY
         sync: false
       - key: ENCRYPTION_KEY
         sync: false
-    # Render's free tier has no persistent disk, so intake_agent.db resets on
-    # every redeploy/restart there. See README "Persistence" section.
+    # The free tier has no persistent disk, so intake_agent.db resets on every redeploy or restart.
